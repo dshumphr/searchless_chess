@@ -154,23 +154,42 @@ class EnhancedActionValueEngine(NeuralEngine):
             # Fallback to standard sampling
             return self._rng.choice(legal_moves, p=probs)
 
-    def analyse(self, board: chess.Board) -> engine.AnalysisResult:
-        """Returns analysis including entropy metrics."""
-        # Get basic analysis from parent class
-        basic_analysis = super().analyse(board)
+  def analyse(self, board: chess.Board) -> engine.AnalysisResult:
+        """Returns buckets log-probs and entropy metrics for each action."""
+        # Get legal actions and create sequences like original ActionValueEngine
+        sorted_legal_moves = engine.get_ordered_legal_moves(board)
+        legal_actions = [utils.MOVE_TO_ACTION[x.uci()] for x in sorted_legal_moves]
+        legal_actions = np.array(legal_actions, dtype=np.int32)
+        legal_actions = np.expand_dims(legal_actions, axis=-1)
         
-        # Convert log probabilities to probabilities
-        probs = np.exp(basic_analysis['log_probs'])
+        # Tokenize return buckets
+        dummy_return_buckets = np.zeros((len(legal_actions), 1), dtype=np.int32)
         
-        # Calculate entropy metrics
+        # Tokenize the board
+        tokenized_fen = tokenizer.tokenize(board.fen()).astype(np.int32)
+        sequences = np.stack([tokenized_fen] * len(legal_actions))
+        
+        # Create sequences
+        sequences = np.concatenate(
+            [sequences, legal_actions, dummy_return_buckets],
+            axis=1,
+        )
+
+        # Get log probabilities
+        log_probs = self.predict_fn(sequences)[:, -1]
+        
+        # Calculate probabilities and entropy metrics
+        probs = np.exp(log_probs)
         entropy = self.calculate_entropy(probs)
         varentropy = self.calculate_varentropy(probs)
+        regime = self.detect_regime(entropy, varentropy)
         
         return {
-            **basic_analysis,
-            'entropy': entropy,
+            'log_probs': log_probs,
+            'entropy': entropy, 
             'varentropy': varentropy,
-            'regime': self.detect_regime(entropy, varentropy)
+            'regime': regime,
+            'fen': board.fen()
         }
 
     def play(self, board: chess.Board) -> chess.Move:
