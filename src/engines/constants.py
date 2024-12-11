@@ -45,6 +45,11 @@ def _build_neural_engine(
       num_layers = 8
       embedding_dim = 256
       num_heads = 8
+    case '9Me':
+      policy = 'action_value_entropy'
+      num_layers = 8
+      embedding_dim = 256
+      num_heads = 8
     case '136M':
       policy = 'action_value'
       num_layers = 8
@@ -66,7 +71,7 @@ def _build_neural_engine(
   num_return_buckets = 128
 
   match policy:
-    case 'action_value':
+    case 'action_value' | 'action_value_entropy':
       output_size = num_return_buckets
     case 'behavioral_cloning':
       output_size = utils.NUM_ACTIONS
@@ -116,6 +121,9 @@ ENGINE_BUILDERS = {
     'local': functools.partial(_build_neural_engine, model_name='local'),
     '9M': functools.partial(
         _build_neural_engine, model_name='9M', checkpoint_step=6_400_000
+    ),
+    '9Me': functools.partial(
+        _build_neural_engine, model_name='9Me', checkpoint_step=6_400_000
     ),
     '136M': functools.partial(
         _build_neural_engine, model_name='136M', checkpoint_step=6_400_000

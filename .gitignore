@@ -22,3 +22,8 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
+checkpoints/9M
+checkpoints/9Me
+BayesElo/
+*.tar.bz2

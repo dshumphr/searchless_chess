@@ -67,6 +67,129 @@ def _update_scores_with_repetitions(
     board.pop()
 
 
+class EnhancedActionValueEngine(NeuralEngine):
+    """Neural engine using P(r | s, a) with entropy-based sampling."""
+
+    def __init__(
+        self,
+        return_buckets_values: np.ndarray | None = None,
+        predict_fn: PredictFn | None = None,
+        temperature: float | None = None,
+        entropy_config: dict | None = None,
+    ):
+        super().__init__(return_buckets_values, predict_fn, temperature)
+        # Default entropy configuration
+        self.entropy_config = entropy_config or {
+            'low_entropy_threshold': 0.3,
+            'medium_entropy_threshold': 1.2,
+            'high_entropy_threshold': 2.5,
+            'low_varentropy_threshold': 1.2,
+            'high_varentropy_threshold': 2.5,
+            'lelv_temperature': 0.3,  # Lower temperature for high confidence
+            'helv_temperature': 1.0,  # Standard temperature
+            'lehv_top_k': 3,         # Number of top moves to consider in LEHV
+            'lehv_temperature': 1.5,  # Higher temperature for exploration
+        }
+
+    def calculate_entropy(self, probs: np.ndarray) -> float:
+        """Calculate Shannon entropy of probability distribution."""
+        eps = 1e-10
+        log_probs = np.log(probs + eps)
+        return -np.sum(probs * log_probs)
+
+    def calculate_varentropy(self, probs: np.ndarray) -> float:
+        """Calculate normalized variance-entropy of probability distribution."""
+        n = len(probs)
+        mean_prob = np.mean(probs)
+        squared_deviations = (probs - mean_prob) ** 2
+        return np.sum(probs * squared_deviations) / (n - 1)
+
+    def detect_regime(self, entropy: float, varentropy: float) -> str:
+        """Determine sampling regime based on entropy metrics."""
+        cfg = self.entropy_config
+        
+        if entropy < cfg['low_entropy_threshold'] and varentropy < cfg['low_varentropy_threshold']:
+            return 'LELV'
+        elif entropy > cfg['high_entropy_threshold'] and varentropy < cfg['low_varentropy_threshold']:
+            return 'HELV'
+        elif entropy < cfg['high_entropy_threshold'] and varentropy > cfg['high_varentropy_threshold']:
+            return 'LEHV'
+        elif entropy > cfg['medium_entropy_threshold'] and varentropy > cfg['high_varentropy_threshold']:
+            return 'HEHV'
+        else:
+            return 'HELV'  # Default to standard sampling
+
+    def sample_move(self, probs: np.ndarray, legal_moves: list[chess.Move], regime: str) -> chess.Move:
+        """Sample a move based on the detected regime."""
+        cfg = self.entropy_config
+
+        if regime == 'LELV':
+            # High confidence - use lower temperature
+            scaled_probs = scipy.special.softmax(np.log(probs) / cfg['lelv_temperature'])
+            return self._rng.choice(legal_moves, p=scaled_probs)
+            
+        elif regime == 'HELV':
+            # Standard sampling with normal temperature
+            scaled_probs = scipy.special.softmax(np.log(probs) / cfg['helv_temperature'])
+            return self._rng.choice(legal_moves, p=scaled_probs)
+            
+        elif regime == 'LEHV':
+            # Sample from top k moves with higher temperature
+            top_k_indices = np.argpartition(probs, -cfg['lehv_top_k'])[-cfg['lehv_top_k']:]
+            top_k_probs = probs[top_k_indices]
+            top_k_probs = scipy.special.softmax(np.log(top_k_probs) / cfg['lehv_temperature'])
+            selected_idx = self._rng.choice(len(top_k_indices), p=top_k_probs)
+            return legal_moves[top_k_indices[selected_idx]]
+            
+        elif regime == 'HEHV':
+            # Resampling in the mist
+            first_choice_idx = self._rng.choice(len(legal_moves), p=probs)
+            masked_probs = probs.copy()
+            masked_probs[first_choice_idx] = 0.0
+            masked_probs = masked_probs / masked_probs.sum()  # Renormalize
+            second_choice_idx = self._rng.choice(len(legal_moves), p=masked_probs)
+            return legal_moves[second_choice_idx]
+            
+        else:
+            # Fallback to standard sampling
+            return self._rng.choice(legal_moves, p=probs)
+
+    def analyse(self, board: chess.Board) -> engine.AnalysisResult:
+        """Returns analysis including entropy metrics."""
+        # Get basic analysis from parent class
+        basic_analysis = super().analyse(board)
+        
+        # Convert log probabilities to probabilities
+        probs = np.exp(basic_analysis['log_probs'])
+        
+        # Calculate entropy metrics
+        entropy = self.calculate_entropy(probs)
+        varentropy = self.calculate_varentropy(probs)
+        
+        return {
+            **basic_analysis,
+            'entropy': entropy,
+            'varentropy': varentropy,
+            'regime': self.detect_regime(entropy, varentropy)
+        }
+
+    def play(self, board: chess.Board) -> chess.Move:
+        """Select a move using regime-based sampling."""
+        # Get analysis with entropy metrics
+        analysis = self.analyse(board)
+        return_buckets_log_probs = analysis['log_probs']
+        return_buckets_probs = np.exp(return_buckets_log_probs)
+        win_probs = np.inner(return_buckets_probs, self._return_buckets_values)
+        
+        # Update scores for repetitions
+        _update_scores_with_repetitions(board, win_probs)
+        sorted_legal_moves = engine.get_ordered_legal_moves(board)
+
+        # Convert to probabilities and sample based on regime
+        probs = scipy.special.softmax(win_probs)
+        regime = analysis['regime']
+        return self.sample_move(probs, sorted_legal_moves, regime)
+
 class ActionValueEngine(NeuralEngine):
   """Neural engine using a function P(r | s, a)."""
 
@@ -231,4 +354,5 @@ ENGINE_FROM_POLICY = {
     'action_value': ActionValueEngine,
     'state_value': StateValueEngine,
     'behavioral_cloning': BCEngine,
+    'action_value_entropy': EnhancedActionValueEngine,
 }

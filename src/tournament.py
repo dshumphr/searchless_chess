@@ -182,13 +182,14 @@ def main(argv: Sequence[str]) -> None:
       agent: constants.ENGINE_BUILDERS[agent]()
       for agent in [
           '9M',
-          '136M',
-          '270M',
+          '9Me'
+          #'136M',
+          #'270M',
           'stockfish',
-          'stockfish_all_moves',
-          'leela_chess_zero_depth_1',
-          'leela_chess_zero_policy_net',
-          'leela_chess_zero_400_sims',
+          #'stockfish_all_moves',
+          #'leela_chess_zero_depth_1',
+          #'leela_chess_zero_policy_net',
+          #'leela_chess_zero_400_sims',
       ]
   }
 

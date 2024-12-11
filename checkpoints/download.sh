@@ -18,13 +18,15 @@
 set -ex
 
 wget https://storage.googleapis.com/searchless_chess/checkpoints/9M.zip
-wget https://storage.googleapis.com/searchless_chess/checkpoints/136M.zip
-wget https://storage.googleapis.com/searchless_chess/checkpoints/270M.zip
+#wget https://storage.googleapis.com/searchless_chess/checkpoints/136M.zip
+#wget https://storage.googleapis.com/searchless_chess/checkpoints/270M.zip
 
 unzip 9M.zip
-unzip 136M.zip
-unzip 270M.zip
+#unzip 136M.zip
+#unzip 270M.zip
 
 rm 9M.zip
-rm 136M.zip
-rm 270M.zip
+#rm 136M.zip
+#rm 270M.zip
+
+cp -R ./9M ./9Me
