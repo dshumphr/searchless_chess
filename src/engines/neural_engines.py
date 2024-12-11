@@ -174,8 +174,8 @@ class EnhancedActionValueEngine(NeuralEngine):
             return legal_moves[second_choice_idx]
         else:
             # High confidence - use lower temperature
-            scaled_probs = scipy.special.softmax(np.log(probs) / cfg['lelv_temperature'])
-            return self._rng.choice(legal_moves, p=scaled_probs)
+            best_index = np.argmax(probs)
+            return legal_moves[best_index]
 
     def analyse(self, board: chess.Board) -> engine.AnalysisResult:
         """Returns buckets log-probs and entropy metrics for each action."""
