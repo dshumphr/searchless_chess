@@ -85,26 +85,62 @@ class EnhancedActionValueEngine(NeuralEngine):
             'high_entropy_threshold': 2.5,
             'low_varentropy_threshold': 1.2,
             'high_varentropy_threshold': 2.5,
-            'lelv_temperature': 0.3,  # Lower temperature for high confidence
+            'lelv_temperature': 0,  # Lower temperature for high confidence
             'helv_temperature': 1.0,  # Standard temperature
             'lehv_top_k': 3,         # Number of top moves to consider in LEHV
             'lehv_temperature': 1.5,  # Higher temperature for exploration
         }
+        self.regime_counts = {
+            'LELV': 0,
+            'HELV': 0,
+            'LEHV': 0,
+            'HEHV': 0
+        }
+        self.entropy_history = []
+        self.varentropy_history = []
+        self.moves_made = 0
 
-    def calculate_entropy(self, probs: np.ndarray) -> float:
-        """Calculate Shannon entropy of probability distribution."""
-        eps = 1e-10
-        log_probs = np.log(probs + eps)
-        return -np.sum(probs * log_probs)
+    def log_statistics(self, entropy: float, varentropy: float, regime: str):
+        """Log statistics for analysis."""
+        self.moves_made += 1
+        self.regime_counts[regime] += 1
+        self.entropy_history.append(entropy)
+        self.varentropy_history.append(varentropy)
+        
+        # Print periodic statistics
+        if self.moves_made % 100 == 0:
+            print("\nAfter", self.moves_made, "moves:")
+            total = sum(self.regime_counts.values())
+            print("Regime distribution:")
+            for regime, count in self.regime_counts.items():
+                percentage = (count / total) * 100 if total > 0 else 0
+                print(f"{regime}: {percentage:.1f}%")
+            
+            if self.entropy_history:
+                print("\nEntropy stats:")
+                print(f"Mean: {np.mean(self.entropy_history):.3f}")
+                print(f"Std: {np.std(self.entropy_history):.3f}")
+                print(f"Min: {np.min(self.entropy_history):.3f}")
+                print(f"Max: {np.max(self.entropy_history):.3f}")
+            
+            if self.varentropy_history:
+                print("\nVarentropy stats:")
+                print(f"Mean: {np.mean(self.varentropy_history):.3f}")
+                print(f"Std: {np.std(self.varentropy_history):.3f}")
+                print(f"Min: {np.min(self.varentropy_history):.3f}")
+                print(f"Max: {np.max(self.varentropy_history):.3f}")
 
-    def calculate_varentropy(self, probs: np.ndarray) -> float:
-        """Calculate normalized variance-entropy of probability distribution."""
-        n = len(probs)
-        if n <= 1:
-            return 0.0  # No variance for single move
-        mean_prob = np.mean(probs)
-        squared_deviations = (probs - mean_prob) ** 2
-        return np.sum(probs * squared_deviations) / (n - 1)
+    def calculate_entropy_metrics(self, log_probs: np.ndarray) -> tuple[float, float]:
+        """Calculate entropy and varentropy from log probabilities."""
+        probs = np.exp(log_probs)
+        entropy = -np.sum(probs * log_probs)
+        
+        # Calculate varentropy using the formula from the reference implementation
+        diff = log_probs + entropy  # Broadcasting handled by numpy
+        varentropy = np.sum(probs * diff**2)
+        
+        return entropy, varentropy
+
 
     def detect_regime(self, entropy: float, varentropy: float) -> str:
         """Determine sampling regime based on entropy metrics."""
@@ -126,16 +162,7 @@ class EnhancedActionValueEngine(NeuralEngine):
         cfg = self.entropy_config
         num_moves = len(legal_moves)
 
-        if regime == 'LEHV':
-            # For LEHV, use only as many moves as we have available
-            top_k = min(cfg['lehv_top_k'], num_moves)
-            top_k_indices = np.argpartition(probs, -top_k)[-top_k:]
-            top_k_probs = probs[top_k_indices]
-            top_k_probs = scipy.special.softmax(np.log(top_k_probs) / cfg['lehv_temperature'])
-            selected_idx = self._rng.choice(len(top_k_indices), p=top_k_probs)
-            return legal_moves[top_k_indices[selected_idx]]
-            
-        elif regime == 'HEHV':
+        if regime == 'HEHV':
             if num_moves == 1:
                 return legal_moves[0]  # Only one choice
             # Resampling in the mist
@@ -145,15 +172,9 @@ class EnhancedActionValueEngine(NeuralEngine):
             masked_probs = masked_probs / np.sum(masked_probs)  # Renormalize
             second_choice_idx = self._rng.choice(num_moves, p=masked_probs)
             return legal_moves[second_choice_idx]
-            
-        elif regime == 'LELV':
+        else:
             # High confidence - use lower temperature
             scaled_probs = scipy.special.softmax(np.log(probs) / cfg['lelv_temperature'])
-            return self._rng.choice(legal_moves, p=scaled_probs)
-            
-        else:  # HELV and fallback
-            # Standard sampling with normal temperature
-            scaled_probs = scipy.special.softmax(np.log(probs) / cfg['helv_temperature'])
             return self._rng.choice(legal_moves, p=scaled_probs)
 
     def analyse(self, board: chess.Board) -> engine.AnalysisResult:
@@ -181,10 +202,10 @@ class EnhancedActionValueEngine(NeuralEngine):
         log_probs = self.predict_fn(sequences)[:, -1]
         
         # Calculate probabilities and entropy metrics
-        probs = np.exp(log_probs)
-        entropy = self.calculate_entropy(probs)
-        varentropy = self.calculate_varentropy(probs)
+        entropy, varentropy = self.calculate_entropy_metrics(log_probs)
         regime = self.detect_regime(entropy, varentropy)
+
+        self.log_statistics(entropy, varentropy, regime)
         
         return {
             'log_probs': log_probs,
