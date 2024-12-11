@@ -100,6 +100,8 @@ class EnhancedActionValueEngine(NeuralEngine):
     def calculate_varentropy(self, probs: np.ndarray) -> float:
         """Calculate normalized variance-entropy of probability distribution."""
         n = len(probs)
+        if n <= 1:
+            return 0.0  # No variance for single move
         mean_prob = np.mean(probs)
         squared_deviations = (probs - mean_prob) ** 2
         return np.sum(probs * squared_deviations) / (n - 1)
@@ -122,37 +124,37 @@ class EnhancedActionValueEngine(NeuralEngine):
     def sample_move(self, probs: np.ndarray, legal_moves: list[chess.Move], regime: str) -> chess.Move:
         """Sample a move based on the detected regime."""
         cfg = self.entropy_config
+        num_moves = len(legal_moves)
 
-        if regime == 'LELV':
-            # High confidence - use lower temperature
-            scaled_probs = scipy.special.softmax(np.log(probs) / cfg['lelv_temperature'])
-            return self._rng.choice(legal_moves, p=scaled_probs)
-            
-        elif regime == 'HELV':
-            # Standard sampling with normal temperature
-            scaled_probs = scipy.special.softmax(np.log(probs) / cfg['helv_temperature'])
-            return self._rng.choice(legal_moves, p=scaled_probs)
-            
-        elif regime == 'LEHV':
-            # Sample from top k moves with higher temperature
-            top_k_indices = np.argpartition(probs, -cfg['lehv_top_k'])[-cfg['lehv_top_k']:]
+        if regime == 'LEHV':
+            # For LEHV, use only as many moves as we have available
+            top_k = min(cfg['lehv_top_k'], num_moves)
+            top_k_indices = np.argpartition(probs, -top_k)[-top_k:]
             top_k_probs = probs[top_k_indices]
             top_k_probs = scipy.special.softmax(np.log(top_k_probs) / cfg['lehv_temperature'])
             selected_idx = self._rng.choice(len(top_k_indices), p=top_k_probs)
             return legal_moves[top_k_indices[selected_idx]]
             
         elif regime == 'HEHV':
+            if num_moves == 1:
+                return legal_moves[0]  # Only one choice
             # Resampling in the mist
-            first_choice_idx = self._rng.choice(len(legal_moves), p=probs)
+            first_choice_idx = self._rng.choice(num_moves, p=probs)
             masked_probs = probs.copy()
             masked_probs[first_choice_idx] = 0.0
-            masked_probs = masked_probs / masked_probs.sum()  # Renormalize
-            second_choice_idx = self._rng.choice(len(legal_moves), p=masked_probs)
+            masked_probs = masked_probs / np.sum(masked_probs)  # Renormalize
+            second_choice_idx = self._rng.choice(num_moves, p=masked_probs)
             return legal_moves[second_choice_idx]
             
-        else:
-            # Fallback to standard sampling
-            return self._rng.choice(legal_moves, p=probs)
+        elif regime == 'LELV':
+            # High confidence - use lower temperature
+            scaled_probs = scipy.special.softmax(np.log(probs) / cfg['lelv_temperature'])
+            return self._rng.choice(legal_moves, p=scaled_probs)
+            
+        else:  # HELV and fallback
+            # Standard sampling with normal temperature
+            scaled_probs = scipy.special.softmax(np.log(probs) / cfg['helv_temperature'])
+            return self._rng.choice(legal_moves, p=scaled_probs)
 
     def analyse(self, board: chess.Board) -> engine.AnalysisResult:
         """Returns buckets log-probs and entropy metrics for each action."""
