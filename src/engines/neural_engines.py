@@ -154,7 +154,7 @@ class EnhancedActionValueEngine(NeuralEngine):
             # Fallback to standard sampling
             return self._rng.choice(legal_moves, p=probs)
 
-  def analyse(self, board: chess.Board) -> engine.AnalysisResult:
+    def analyse(self, board: chess.Board) -> engine.AnalysisResult:
         """Returns buckets log-probs and entropy metrics for each action."""
         # Get legal actions and create sequences like original ActionValueEngine
         sorted_legal_moves = engine.get_ordered_legal_moves(board)
